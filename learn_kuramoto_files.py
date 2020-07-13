@@ -26,7 +26,7 @@ def random_erdos_renyi_network(num_osc,p_value=0.5,seed=-1):
     p_value: probability of connection
     seed: random seed
     
-    Outputs: num_osc by  num_osc numpy matrix (symmetric, with zeros along diagonal)
+    Outputs: num_osc by num_osc numpy matrix (symmetric, with zeros along diagonal)
     
     '''
     if int(seed)>0:
@@ -85,8 +85,8 @@ def dydt_kuramoto(t,y,params):
 
 def solve_kuramoto_ode(dt,params,tmax=500.0):
     ''' 
-    dydt_kuramoto_ode(dt,params,tmax): 
-        Solve kuramoto ODE using RK45
+    solve_kuramoto_ode(dt,params,tmax): 
+        Solve kuramoto ODE with IC/perturbation scheme using RK45
     
     Inputs:
     dt: time step
@@ -120,11 +120,10 @@ def solve_kuramoto_ode(dt,params,tmax=500.0):
     y=(sol.y.T)
     return t,y
 
-
 def solve_kuramoto_ode_with_noise(dt,params,tmax=500.0,D=0.0):
     ''' 
-    dydt_kuramoto_ode(dt,params,tmax): 
-        Solve kuramoto ODE using RK45
+    solve_kuramoto_ode_with_noise(dt,params,tmax,D): 
+        Solve kuramoto ODE with IC/perturbation scheme and noise using RK2
     
     Inputs:
     dt: time step
@@ -133,7 +132,8 @@ def solve_kuramoto_ode_with_noise(dt,params,tmax=500.0,D=0.0):
                 'A': (n,n)
                 'K': scalar 
                 'Gamma': vectorized function
-    tmax: maximum integration time.
+    tmax: maximum integration time
+    D: scalar (noise level).
        
     Outputs:  
     t: vector of time values (numsteps,1)
@@ -157,8 +157,8 @@ def solve_kuramoto_ode_with_noise(dt,params,tmax=500.0,D=0.0):
 
 def solve_ivp_stochastic_rk2(dydt,T,IC,D):
     ''' 
-    (dydt,T,IC,D): 
-        Solve the stocastic ode given by dy=dydt(y) dt+D sqrt(dt)
+    solve_ivp_stochastic_rk2(dydt,T,IC,D): 
+        Solve the stochastic ode given by dy=dydt(y) dt+D sqrt(dt)
     
     Inputs:
     IC: numpy matrix (1,num_osc)
@@ -167,8 +167,8 @@ def solve_ivp_stochastic_rk2(dydt,T,IC,D):
     D: scalar (noise level)
        
     Outputs:  
-    newy: magnitude of order parameter (num_timesteps,1)
-    Psi: angle of order parameter (num_timesteps,1)
+    T: numpy array of times
+    f(T.squeeze()): matrix of phases (numsteps,num_oscillators)
     ''' 
     # Uses RK2 (improved Euler) with gaussian white noise
     # D is the noise level
@@ -197,8 +197,7 @@ def rkstep(f,y,dt,D):
     D: scalar (noise level)
        
     Outputs:  
-    newy: magnitude of order parameter (num_timesteps,1)
-    Psi: angle of order parameter (num_timesteps,1)
+    newy: numpy matrix (1,num_osc)
     ''' 
     # See  Honeycutt - Stochastic Runge-Kutta Algorithms I White Noise - 1992 -
     # Phys Rev A
@@ -257,73 +256,6 @@ def plot_ode_results(t,phases,figsize=(20,5),fontsize=16):
     plt.ylabel(r'$\Psi(t)=arg(Z(t))$',fontsize=fontsize)
     plt.show()
     
-def generate_data(system_params,solution_params={'dt': 0.1,
-                                                     'noise': 0,
-                                                     'num_repeats': 10,
-                                                     'ts_skip': 1,
-                                                     'tmax': 20.0}):
-    '''
-    generate_data(system_params,solution_params):
-        Solve kuramoto model multiple times and merge to create training data.
-    
-    Inputs:
-    system_params: dictionary with: 
-                        'w': scalar or (n,1)
-                        'A': (n,n)
-                        'K': scalar 
-                        'Gamma': vectorized function
-    solution_params: dictionary with: 
-                        dt: scalar 
-                        tmax: scalar
-                        noise: scalar 
-                        ts_skip: integer
-                        num_repeats: integer
-    
-    Outputs:
-    old: matrix with phases at timestep i (num_timesteps,num_osc)
-    new: matrix with phases at timestep i+1  (num_timesteps,num_osc)
-      
-    '''
-    dt=solution_params['dt']
-    tmax=solution_params['tmax']
-    num_repeats=solution_params['num_repeats']
-    skip=solution_params['ts_skip']
-    noise=solution_params['noise']
-    D=solution_params['dynamic noise']
-    
-    keep_final=False
-    if ('IC' in system_params.keys()):
-        if isinstance(system_params['IC'],dict):
-            perturbation_params=system_params['IC']
-            keep_final=True
-            
-        
-    for k in range(num_repeats): # solve system n_repeats times and combine
-        if keep_final and k>0:
-            lasty=y[-1,:]
-            lasty=lasty-int(lasty.mean()/(2*np.pi))*2*np.pi
-            pert=get_perturbation(lasty,perturbation_params,system_params)
-            print("Repeat {}, phase perturbation: {}".format(k,pert.squeeze()))
-            system_params['IC']=lasty.squeeze()+pert.squeeze()
-        elif keep_final:
-            system_params['IC']=perturbation_params['IC']
-        if D>0:
-            t,y=solve_kuramoto_ode_with_noise(dt,system_params,tmax=tmax,D=D)
-        else:
-            t,y=solve_kuramoto_ode(dt,system_params,tmax=tmax)
-        y=y+noise*np.random.randn(y.shape[0],y.shape[1])
-        old_tmp=y[:-1,:]
-        new_tmp=y[1:,:]
-    
-        n_ts=len(t)-1
-        t=t[range(0,n_ts,skip)]
-        if k==0:
-            old=old_tmp
-            new=new_tmp
-        else:
-            old=np.vstack((old,old_tmp[range(0,n_ts,skip),:]))
-            new=np.vstack((new,new_tmp[range(0,n_ts,skip),:]))
-    return old, new
 def get_perturbation(y,perturbation_params,system_params):
     '''
     get_perturbation(y,perturbation_params,system_params):
@@ -369,10 +301,11 @@ def central_diff(t,y,with_filter=True,truncate=True,return_phases=True):
     y: phase vector (n,m)
     with_filter: boolean
     truncate: boolean
+    return_phases: boolean
     
     Outputs:
-    phase: matrix with phases at timestep i (num_timesteps,num_osc)
-    vel: matrix with velocities at timestep i  (num_timesteps,num_osc)
+    phases: matrix with phases at timestep i (num_timesteps,num_osc)
+    deriv: matrix with velocities at timestep i  (num_timesteps,num_osc)
       
     '''
     num_osc=y.shape[1]
@@ -416,7 +349,7 @@ def generate_data_vel(system_params,solution_params={'dt': 0.1,
     
     Outputs:
     old: matrix with phases at timestep i (num_timesteps,num_osc)
-    new: matrix with phases at timestep i+1  (num_timesteps,num_osc)
+    new: matrix with velocities at timestep i (num_timesteps,num_osc)
       
     '''
     dt=solution_params['dt']
@@ -490,7 +423,7 @@ def get_split(X1,X2,Y,frac):
     Inputs:
     X1: pairwise phase difference matrix (num_timesteps,num_osc,num_osc)
     X2: old phase matrix (num_timesteps,num_osc)
-    Y:  new phase matrix (num_timesteps,num_osc)
+    Y:  velocity matrix  (num_timesteps,num_osc)
     frac: fraction for training data
     
     Outputs:
@@ -518,7 +451,7 @@ def get_training_testing_data(old,new,split_frac=0.8):
     
     Inputs:
     old: matrix with phases at timestep i (num_timesteps,num_osc)
-    new: matrix with phases at timestep i+1  (num_timesteps,num_osc)
+    new: matrix with velocities at timestep i (num_timesteps,num_osc)
     split_frac: fraction for training data
     
     Outputs:
@@ -541,12 +474,12 @@ def shuffle_batch(X1,X2, Y, batch_size):
     Inputs:
     X1: pairwise phase difference matrix (num_timesteps,num_osc,num_osc)
     X2: old phase matrix (num_timesteps,num_osc)
-    Y:  new phase matrix (num_timesteps,num_osc)
+    Y:  velocity matrix  (num_timesteps,num_osc)
     
     Outputs:
     X1_batch: pairwise phase difference matrix (num_timesteps,num_osc,num_osc)
     X2_batch: old phase matrix (num_timesteps,num_osc)
-    Y_batch:  new phase matrix (num_timesteps,num_osc)
+    Y_batch:  velocity matrix  (num_timesteps,num_osc)
     '''
     rnd_idx = np.random.permutation(len(X1))
     n_batches = len(X1) // batch_size
@@ -560,7 +493,7 @@ def loss_sse(ypred,ytrue,A,c):
         compute the sum of squared errors with a regularization term
     
     Inputs:
-    ypred: predicted phases
+    ypred: predicted velocities
     ytrue: observed
     A:  estimated adjacency matrix
     c:  amount of regularization (0 means no regularization) to drive matrix entries towared 0 or 1
@@ -576,30 +509,6 @@ def loss_sse(ypred,ytrue,A,c):
                                 tf.reduce_mean(tf.square(A))+tf.reduce_mean(tf.square(1-A)))
     
     return loss
-
-def predict_phases(oldy,v,params):
-    '''
-    predict_phases(oldy,v,params):
-        use Euler's method to predict phases after one step
-    
-    Inputs:
-    oldy: current phases
-    v:  phase velocity estimate
-    params: dictionary with:
-        dt: time step
-        reg: l2 regularization strength
-        n_coefficients: number of fourier coefficients to use to represent 
-        coupling function
-        learning_rate: learning rate for gradient descent
-        n_epochs: number of epochs for training 
-        batch_size: batch size for training
-        n_oscillators: number of oscillators
-    
-    Outputs:
-    newy: predicted phases
-    '''
-    dt=params['dt']
-    return oldy+dt*v
 
 def get_vel(A,omega,K,X,params):
     '''
@@ -623,7 +532,8 @@ def get_vel(A,omega,K,X,params):
         
     
     Outputs:
-    newy: predicted phases
+    v: predicted velocities
+    G: function outputs Gamma(DeltaTheta)
     
     '''
 
@@ -720,133 +630,6 @@ def get_diff_tensor(y,params):
     return finaldiffmat
 
 
-def learn_model(params,trainX1,trainX2,trainY,testX1,testX2,testY):
-    '''
-    learn_model(params,trainX1,trainX2,trainY,testX1,testX2,testY):
-        Use stochastic gradient descent to learn parameters in model. 
-    
-    Inputs:
-    params: dictionary with:
-        dt: time step
-        reg: l2 regularization strength
-        n_coefficients: number of fourier coefficients to use to represent 
-        coupling function
-        learning_rate: learning rate for gradient descent
-        n_epochs: number of epochs for training 
-        batch_size: batch size for training
-        n_oscillators: number of oscillators
-    trainX1,trainX2,trainY: training data
-    testX1,testX2,testY: testing data
-    
-    Outputs:
-    A: estimated adjacency matrix
-    omega: estimated natural frequencies
-    fout: estimated coupling function values evaluated at testX1
-    K: estimated coupling strength
-    
-    '''
-    learning_rate=params['learning_rate']
-    n_epochs=params['n_epochs']
-    batch_size=params['batch_size']
-    n_oscillators=params['n_oscillators']
-    method=params['prediction_method']
-    global_seed=params['global_seed']
-    # contruct model
-    tf.reset_default_graph()
-    if global_seed>0:
-        tf.set_random_seed(global_seed)
-    # initialize placeholders for inputs
-    X1 = tf.placeholder(dtype=tf.float32, shape=(None,n_oscillators,n_oscillators,1), name="X1")
-    X2 = tf.placeholder(dtype=tf.float32, shape=(None,n_oscillators), name="X2")
-    y = tf.placeholder(dtype=tf.float32, shape=(None,n_oscillators), name="y")
-    
-    
-    ## initialize variable A (Adjacency matrix) that is symmetric with 0 entries on the diagonal.
-    A_rand=tf.Variable(tf.random_normal((n_oscillators,n_oscillators),
-                                        mean=0.5,
-                                        stddev=1/n_oscillators),
-                       name='A_rand',
-                       dtype=tf.float32)
-    
-    A_upper = tf.matrix_band_part(A_rand, 0, -1)
-    A = 0.5 * (A_upper + tf.transpose(A_upper))-tf.matrix_band_part(A_upper,0,0)
-    
-    ## initialize variable omega (natural frequencies) 
-    omega=tf.Variable(tf.random_normal((1,n_oscillators),mean=0,stddev=1/n_oscillators,dtype=tf.float32),
-                      name='omega',dtype=tf.float32) 
-    
-    ## initialize variable K (coupling strength value)
-    K=tf.Variable(tf.random_normal(shape=(1,),mean=1,stddev=1/n_oscillators,dtype=tf.float32),name='K') 
-    
-    
-    c=np.array([1.0,1.0]) # regularization parameters for A matrix
-    
-    ## compute phase velocities
-    v,fout=get_vel(A,omega,K,X1,params)
-    
-    ## compute predicitions
-    
-    if method=='rk2':
-        k1=params['dt']*v
-        k2=params['dt']*get_vel(A,omega,K,get_diff_tensor(X2+k1/2.0,params),params)[0] # compute improved velocity prediction
-        ypred=X2+k2
-    elif method=='rk4':
-        k1=params['dt']*v
-        k2=params['dt']*get_vel(A,omega,K,get_diff_tensor(X2+k1/2.0,params),params)[0]
-        k3=params['dt']*get_vel(A,omega,K,get_diff_tensor(X2+k2/2.0,params),params)[0]
-        k4=params['dt']*get_vel(A,omega,K,get_diff_tensor(X2+k3,params),params)[0]
-        ypred=X2+1/6.0*k1+1/3.0*k2+1/3.0*k3+1/6.0*k4
-    elif method=='euler':
-        ypred=predict_phases(X2,v,params)
-    else:
-        print('Invalid prediction method. Using default of Euler.')
-        ypred=predict_phases(X2,v,params)
-
-    
-    ## compute regularization terms for neural network weights
-    l2_loss = tf.losses.get_regularization_loss()
-    
-    ## loss function computation
-    with tf.name_scope("loss"):
-        loss=loss_sse(ypred,y,A,c)+l2_loss
-        
-    ## initialize optimizer (use Adam)
-    with tf.name_scope("train"):
-        #optimizer=tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
-        optimizer=tf.train.AdamOptimizer(learning_rate=learning_rate,beta1=0.9,beta2=0.999)
-        training_op=optimizer.minimize(loss)
-        
-    ## compute error to be displayed (currently ignores regularization terms)
-    with tf.name_scope("eval"):
-        error=loss_sse(ypred,y,A,np.array([0.0,0.0])) # no Aij error away from 0,1
-        
-    
-    init=tf.global_variables_initializer()
-    
-    
-    ## initialize variables and optimize variables
-    with tf.Session() as sess:
-        init.run()
-
-        ## loop for batch gradient descent
-        for epoch in range(n_epochs):
-            for X1_batch,X2_batch, y_batch in shuffle_batch(add_dim(trainX1), trainX2,trainY, batch_size):
-                sess.run(training_op, feed_dict={X1: X1_batch, X2: X2_batch, y: y_batch})
-            error_batch = error.eval(feed_dict={X1: X1_batch, X2: X2_batch, y: y_batch})
-            error_val = error.eval(feed_dict={X1: add_dim(testX1), X2: testX2, y: testY})
-            ## display results every 20 epochs
-            if epoch % 20==0:
-                print('',end='\n')
-                print("Epoch:",epoch, "Batch error:", error_batch, "Val error:", error_val,end='')
-            else:
-                print('.',end='')
-                #print(tf.trainable_variables())
-        print('',end='\n')
-        return(A.eval(),
-               omega.eval(),
-               fout.eval(feed_dict={X1: add_dim(np.angle(np.exp(1j*testX1))), X2: testX2, y: testY}),
-               K.eval(),error_val)
-        
 def learn_model_vel(params,trainX1,trainX2,trainY,testX1,testX2,testY):
     '''
     learn_model(params,trainX1,trainX2,trainY,testX1,testX2,testY):
