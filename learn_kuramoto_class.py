@@ -109,7 +109,7 @@ class NetworkData():
         
         # dt=t[2:]-t[:-2]
         dy = self.phase[2:,:]-self.phase[:-2,:]
-        deriv = dy/self.dt     # first approximation (y_{i+1}-y{i-1})/dt
+        deriv = dy/(2*self.dt)   # first approximation (y_{i+1}-y{i-1})/(2*dt)
         
         if with_filter:        
             deriv = sp.savgol_filter(deriv, 5, 1, axis=0)
