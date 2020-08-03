@@ -21,13 +21,24 @@ import scipy.signal as sp
 
 
 class Network():
-    def __init__(self,system_params,solution_params):
+    def __init__(self,system_params):
         
         for key, value in system_params.items():
             setattr(self, key, value)
         
-        self.solution_params = solution_params
+        self.gen_erdos_renyi()
+        self.gen_frequencies()
         
+        
+    def add_ivp_info(self,solution_params):
+        
+        for key, value in solution_params.items():
+            setattr(self, key, value)
+        
+        if isinstance(self.IC,dict):
+            self.perturbs = True
+        else:
+            self.perturbs = False
         
         
     def gen_erdos_renyi(self):
@@ -46,7 +57,6 @@ class Network():
         self.A = np.multiply(A,A.T)
         
         
-        
     def gen_frequencies(self):
         '''
         Generates random frequencies for each oscillator.
@@ -58,36 +68,67 @@ class Network():
         self.w = self.mu+self.sigma*np.random.randn(self.num_osc,1).astype('float32')
         
         
+    def dydt_kuramoto(self,t,y):
+        y = np.reshape(y,(-1,1))    # makes y a column vector
+        dydt = self.w + self.K*np.mean(np.multiply(self.A,self.Gamma(y.T-y)),axis=1)
         
-    def kuramoto_rhs(self,Gamma=self.Gamma):
+        return dydt
         
-        
+    
     def gen_data(self):
-        
+        # bulk here missing
+        return phases_all
         
         
 class NetworkData():
-    def __init__(self,phase):
+    def __init__(self,phase,dt):
         
         self.phase = phase
         self.num_oscs = phase.shape[1]
         self.n_timestep = phase.shape[0]
         
-        self.vel = self.get_vel()
+        self.dt = dt
+        self.get_vel(with_filter=True,truncate=False,return_phases=True)
         
         
         
-    def get_vel(self):
+    def get_vel(self,with_filter=True,truncate=True,return_phases=True):
         '''
-        central_diff
+        See: central_diff.  Value dt assumed constant.
+
+        Parameters
+        ----------
+        with_filter : Boolean, optional
+            Use Savitsky-Golay filter? The default is True.
+        truncate : Boolean, optional
+            Only keep internal time points? The default is True.
+        return_phases : Boolean, optional
+            Return both velocities and phases? The default is True.
         '''
+
         
+        # dt=t[2:]-t[:-2]
+        dy = self.phase[2:,:]-self.phase[:-2,:]
+        deriv = dy/self.dt     # first approximation (y_{i+1}-y{i-1})/dt
         
+        if with_filter:        
+            deriv = sp.savgol_filter(deriv, 5, 1, axis=0)
+            
+        if truncate:
+            phases = self.phase[1:-1,:]
+        else:
+            phases = self.phase
+            deriv = np.concatenate([np.nan*np.zeros(shape=(1,self.num_osc)),deriv,
+                                    np.nan*np.zeros(shape=(1,self.num_osc))])
+            
+        if return_phases:
+            self.phase = phases
+        self.vel = deriv
         
         
     def gen_diffs(self):
         '''
-        get_diff_mat
+        See: get_diff_mat.
         '''
         y = self.phase
         
@@ -106,7 +147,30 @@ class NetworkData():
         
         
     def gen_training_test_data(self,frac=0.8):
-        
+        '''
+        See: get_training_testing_data and get_split.
+
+        Parameters
+        ----------
+        frac : TYPE, optional
+            Proportion of data to use as training data. The default is 0.8.
+
+        Returns
+        -------
+        phase_train : TYPE
+            DESCRIPTION.
+        diff_train : TYPE
+            DESCRIPTION.
+        vel_train : TYPE
+            DESCRIPTION.
+        phase_test : TYPE
+            DESCRIPTION.
+        diff_test : TYPE
+            DESCRIPTION.
+        vel_test : TYPE
+            DESCRIPTION.
+
+        '''
         self.gen_diffs
         
         n_timestep = self.diffs.shape[0]
