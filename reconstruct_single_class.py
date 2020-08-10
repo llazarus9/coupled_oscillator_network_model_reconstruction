@@ -35,6 +35,7 @@ system_params = {'num_osc': num_osc,
 
 my_network = lk.KuraRepsNetwork(system_params)
 
+
 ##############################################################################
 ## define numerical solution parameters
 
@@ -52,7 +53,6 @@ IC_setup = {'type': 'reset',          # reset (set phase to 0) or random
       'IC': np.random.rand(num_osc)*np.pi*2  # initial condition for first repeat
       }
 
-
 solution_params={'dt': dt, 
                  'tmax': tmax,
                  'noise': noise_level,
@@ -65,6 +65,7 @@ solution_params={'dt': dt,
 
 my_network.add_ivp_info(solution_params)
 
+
 ##############################################################################
 ## solve IVP and plot results
 
@@ -72,6 +73,8 @@ t = np.arange(0,tmax,dt)[:-1].reshape(-1,1)
 n_ts = t.shape[0]
 
 phases,vels = my_network.solve()
+my_data = lk.NetworkData(phases,vels)
+
 
 
 figsize=(12,4)
@@ -106,5 +109,42 @@ for rep in range(num_repeats):
             ax.axvline(x=rep*tmax,ymin=ylim[0],ymax=ylim[1],color='k',linestyle='--')
 plt.show()
 
-num_attempts = 5 # number of times to attempt to learn from data for each network
-method = 'euler' #'rk2','rk4','euler'
+
+##############################################################################
+## define learning parameters
+
+num_attempts = 5
+n_epochs = 100
+batch_size = 100
+n_coefficients = 5 # number of harmonics
+method = 'rk4' #'rk2','rk4','euler',
+
+learning_params = {'learning_rate': 0.005,
+                   'n_epochs': n_epochs, 
+                   'batch_size': batch_size,
+                   'n_oscillators': num_osc,
+                   'dt': dt,
+                   'n_coefficients': n_coefficients,
+                   'reg': 0.0001,
+                   'prediction_method': method,
+                   'n_attempts': num_attempts,
+                   'global_seed': random_seed
+                   }
+
+my_model = lk.LearnModel(learning_params)
+
+
+##############################################################################
+## train and evaluate results
+
+train_model = False
+if train_model:
+    
+    my_data.gen_training_test_data()
+    
+    predA,predw,fout,K,error_val = my_model.learn(my_data)
+
+    f_res,A_res,w_res = my_model.evaluate(my_network,
+                                          print_results=True,show_plots=False)
+
+

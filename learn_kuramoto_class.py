@@ -155,6 +155,9 @@ class KuraRepsNetwork():
                 phases_all = np.vstack((phases_all,y[range(1,n_ts+1,self.ts_skip),:]))
                 deriv_all = np.vstack((deriv_all,deriv[range(1,n_ts+1,self.ts_skip),:]))
         
+        self.phases = phases_all
+        self.derivs = deriv_all
+        
         return phases_all,deriv_all
         
 
@@ -321,23 +324,9 @@ class NetworkData():
         frac : TYPE, optional
             Proportion of data to use as training data. The default is 0.8.
 
-        Returns
-        -------
-        phase_train : TYPE
-            DESCRIPTION.
-        diff_train : TYPE
-            DESCRIPTION.
-        vel_train : TYPE
-            DESCRIPTION.
-        phase_test : TYPE
-            DESCRIPTION.
-        diff_test : TYPE
-            DESCRIPTION.
-        vel_test : TYPE
-            DESCRIPTION.
-
         '''
-        self.gen_diffs
+        if self.diffs is None:
+            self.gen_diffs
         
         n_timestep = self.diffs.shape[0]
         inds = np.random.permutation(n_timestep)
@@ -345,14 +334,289 @@ class NetworkData():
         traininds = inds[:stop]
         testinds = inds[stop:]
         
-        phase_train = self.phase[traininds,:]
-        diff_train = self.diffs[traininds,:,:]
-        vel_train = self.vel[traininds,:]
+        self.phase_train = self.phase[traininds,:]
+        self.diff_train = self.diffs[traininds,:,:]
+        self.vel_train = self.vel[traininds,:]
         
-        phase_test = self.phase[testinds,:]
-        diff_test = self.diffs[testinds,:,:]
-        vel_test = self.vel[testinds,:]
+        self.phase_test = self.phase[testinds,:]
+        self.diff_test = self.diffs[testinds,:,:]
+        self.vel_test = self.vel[testinds,:]
         
-        return phase_train,diff_train,vel_train,phase_test,diff_test,vel_test
+        #return self.phase_train,self.diff_train,self.vel_train,
+            #self.phase_test,self.diff_test,self.vel_test
+    
+    
+    def shuffle_batch(self,batch_size):
         
+        rnd_idx = np.random.permutation(len(self.phase_train))
+        n_batches = len(self.phase_train) // batch_size
+        
+        for batch_idx in np.array_split(rnd_idx, n_batches):
+            
+            diff_batch = self.diff_train[batch_idx]
+            phase_batch = self.phase_train[batch_idx]
+            vel_batch = self.vel_train[batch_idx]
+            
+            yield diff_batch, phase_batch, vel_batch
+
+
+class LearnModel():
+    def __init__(self,learning_params):
+        
+        for key, value in learning_params.items():
+            setattr(self, key, value)
+    
+    
+    def learn(self,data):
+        
+        # obviously a lot to fill in here.
+        
+        self.diff_test = data.diff_test
+        pass
+    
+    
+    def evaluate(self,true_net, print_results=True, show_plots=False):
+        
+        if self.K < 0:
+            self.fout = -1.0*self.fout
+            self.K = -1.0*self.K
+        
+        f_res,c = evaluate_f(self.diff_test, self.fout, self.K, true_net.Gamma, 
+                           print_results=print_results, show_plots=show_plots)
+        A_res = evaluate_A(self.A, true_net.A, proportion_of_max=0.9,
+                         print_results=print_results, show_plots=show_plots)
+        
+        Nj = (self.A/c[1]).sum(axis=0)
+        self.w = self.w - self.K*Nj*c[0]/self.num_osc
+        w_res = evaluate_w(self.w, true_net.w, print_results=print_results)
+        
+        return f_res, A_res, w_res
+        
+    
+def loss_sse(self,ypred,ytrue,A,c):
+    
+    push_in = 100
+    push_out = 10**(-6)
+    loss=(tf.reduce_mean(tf.square(tf.subtract(ypred,ytrue)),name="loss")
+            +push_in*(c[0]*tf.reduce_mean(tf.maximum(A-1,0))
+                  +c[1]*tf.reduce_mean(tf.maximum(-A,0)))
+            +push_out*(tf.reduce_mean(tf.square(A))
+                       +tf.reduce_mean(tf.square(1-A))))
+    
+    return loss
+
+
+def evaluate_w(predw,truew, print_results=True):
+    ''' 
+    evaluate_w(predw,system_params, print_results=True):
+        compute results for frequency estimation
+    Inputs:
+    predw: vector of estimated frequencies
+    system_params: dictionary with: 
+                'w': scalar or (n,1)
+                'A': (n,n)
+                'K': scalar 
+                'Gamma': vectorized function
+    print_results: boolean to determine if results should be displayed
+    
+    Outputs:
+    w_res: series with labeled results
+    
+    '''
+    predw = predw.reshape((-1,1))
+    
+    absolute_deviation = np.abs(truew-predw)
+    relative_deviation = absolute_deviation/np.abs(truew)*100
+    
+    if print_results:
+        print('')
+        print('Evaluating natural frequencies:')
+        print('')    
+        print('Maximum absolute deviation: %.5f' % (np.max(absolute_deviation)))
+        print('Mean absolute deviation: %.5f' % (np.mean(absolute_deviation)))
+        print('Maximum relative deviation (%%): %.5f' % (np.max(relative_deviation)))
+        print('Mean relative deviation (%%): %.5f' % (np.mean(relative_deviation)))
+        print('Correlation: %.5f' % (np.corrcoef(np.concatenate([truew,predw],axis=1).T)[0,1]))
+        print('')    
+    
+    w_res = pd.Series()
+    w_res['Maximum absolute deviation'] = np.max(absolute_deviation)
+    w_res['Mean absolute deviation'] = np.mean(absolute_deviation)
+    w_res['Maximum relative deviation (%)'] = np.max(relative_deviation)
+    w_res['Mean relative deviation (%)'] = np.mean(relative_deviation)
+    w_res['Correlation'] = np.corrcoef(np.concatenate([truew,predw],axis=1).T)[0,1]
+    
+    return w_res
+
+def evaluate_f(testX1,fout,K,corr_G, print_results=True,show_plots=False):
+    ''' 
+    evaluate_f(predw,system_params, print_results,show_plots):
+        compute results for frequency estimation
+    Inputs:
+    testX1: matrix of phase differences
+    fout: matrix of estimated coupling function values
+    K: estimated coupling strength
+    system_params: dictionary with: 
+                'w': scalar or (n,1)
+                'A': (n,n)
+                'K': scalar - ignored
+                'Gamma': vectorized function
+    print_results: boolean to determine if results should be displayed
+    show_plots: boolean to determine if result should be plotted
+    
+    Outputs:
+    f_res: series with labeled results
+    
+    '''
+
+    FS=16  # fontsize
+    n_pts=1000 # points for interpolation
+    
+    # reshape and sort vectors
+    fout_v2=np.reshape(fout,(-1,))
+    X1_v2=np.angle(np.exp(1j*np.reshape(testX1,(-1,))))
+    X1_v3, fout_v3=(np.array(t) for t in zip(*sorted(zip(X1_v2,fout_v2))))
+    
+    
+    # interpolate 
+    x_for_fout=np.linspace(-np.pi,np.pi,n_pts,endpoint=True)
+    predF=np.interp(x_for_fout,X1_v3,fout_v3)
+    correctF = corr_G(x_for_fout)
+    
+    # find best scaling for coupling function
+    #area_diff_func=lambda c: np.trapz(np.abs(c*predF-correctF),x_for_fout)
+    #res=optimize.minimize_scalar(area_diff_func,bounds=(-100,100))
+    area_diff_func=lambda c: np.trapz(np.abs(c[0]+c[1]*predF-correctF),x_for_fout)
+    res=optimize.minimize(area_diff_func,x0=np.array([0,1]),bounds=[(-10,10),(-100,100)])
+    c=res.x    
+    # compute areas 
+    
+    area_between_predF_correctF=area_diff_func(c)
+    area_between_null_correctF=np.trapz(np.abs(correctF),x_for_fout)
+    area_ratio=area_between_predF_correctF/area_between_null_correctF
+    
+    
+    
+    f_res=pd.Series()
+    f_res['Area between predicted and true coupling function']=area_between_predF_correctF
+    f_res['Area between true coupling function and axis']=area_between_null_correctF
+    f_res['Area ratio']=area_ratio
+    
+    # display results
+    if show_plots:
+        plt.figure()
+        plt.plot(x_for_fout,c[0]+c[1]*predF,'blue')
+        plt.plot(x_for_fout,correctF,'red')
+        plt.xlabel(r'Phase difference $\Delta\theta$',fontsize=FS)
+        plt.ylabel(r'Coupling: $\Gamma(\Delta\theta)$',fontsize=FS)
+    if print_results:
+        print('')
+        print('Evaluating coupling function:')
+        print('')
+        print("Area between predicted and true coupling function: %.5f" % (area_between_predF_correctF))
+        print("Area between true coupling function and axis: %.5f" % (area_between_null_correctF))
+        print("Area ratio: %.5f" % (area_ratio))
+        print('')
+    return f_res,c
+
+def evaluate_A(predA,trueA, print_results=True,show_plots=False, proportion_of_max=0.9):
+    ''' 
+    evaluate_A(predA,system_params, print_results,show_plots):
+        compute results for adjacency matrix estimation
+    Inputs:
+    predA: predicted adjacency matrix (no threshold)
+
+    system_params: dictionary with: 
+                'w': scalar or (n,1)
+                'A': (n,n)
+                'K': scalar 
+                'Gamma': vectorized function
+    print_results: boolean to determine if results should be displayed
+    show_plots: boolean to determine if result should be plotted
+    
+    Outputs:
+    A_res: series with labeled results
+    
+    '''
+    #print("predA:",predA,type(predA))
+    FS=16 # fontsize
+    pos_label=1.0 # determines which label is considered a positive.
+    fpr, tpr, thresholds = roc_curve(remove_diagonal(trueA,1),
+                                         remove_diagonal(predA,1),
+                                         pos_label=pos_label,
+                                         drop_intermediate=False)
+    roc_auc = auc(fpr, tpr)
+    #print("roc_auc:",roc_auc,type(roc_auc))
+    warnings.filterwarnings('ignore')
+    f1_scores=np.array([f1_score(remove_diagonal(trueA,1),1*(remove_diagonal(predA,1)>thr)) for thr in thresholds])
+    warnings.filterwarnings('default')
+    optimal_f1=np.max(f1_scores)
+    optimal_threshold=thresholds[np.argmax(f1_scores)]
+    inds=list(np.where(f1_scores>= proportion_of_max*optimal_f1)[0])
+    threshold_range=[np.min(thresholds[inds]),np.max(thresholds[inds])]
+    
+    if show_plots:
+        plt.figure()
+        plt.plot(thresholds,f1_scores,color='black')
+        plt.xlim(0,1)
+        plt.ylim(0,1)
+        plt.xlabel('threshold',fontsize=FS)
+        plt.ylabel('F1 score',fontsize=FS)
+        plt.fill(np.append(thresholds[inds],[threshold_range[0],threshold_range[1]]),
+                 np.append(f1_scores[inds],[0.0,0.0]),color='red',alpha=0.2)
+        plt.text(0.5,0.5,'>%.1f %% of peak f1 score' %(100*proportion_of_max),fontsize=FS,ha='center')
+    
+    n_errors=np.sum(np.sum(abs((predA>optimal_threshold).astype(int)-trueA)))/2    
+    num_osc=trueA.shape[0]
+    
+    if print_results:
+        print('')
+        print('Evaluating adjacency matrix:')   
+        print('')
+        print('Errors: %d out of %d' % (n_errors,(num_osc*(num_osc-1)/2)))
+        print('Error rate: %.5f%%' % (n_errors/(num_osc*(num_osc-1.0)/2.0)*100.0))
+        print('Area under ROC curve: %.5f' % (roc_auc))
+        print('Best f1 score: %.5f' %(optimal_f1))
+        print('Threshold for best f1 score: %.5f' %(optimal_threshold))
+        print('Threshold range for >%.1f%% of best f1 score: [%.5f,%.5f]' % (100*proportion_of_max,threshold_range[0],threshold_range[1]))
+        print('')
+    
+    A_res=pd.Series()
+    
+    A_res['Number of errors']=n_errors
+    A_res['Error rate']=n_errors/(num_osc*(num_osc-1)/2)*100
+    A_res['Area under ROC curve']=roc_auc
+    A_res['Best f1 score']=optimal_f1
+    A_res['Threshold for best f1 score']=optimal_threshold
+    A_res['Threshold range for >%.1f%% of best f1 score'% (100*proportion_of_max)]=threshold_range
+    
+
+    return A_res
+
+
+def remove_diagonal(A,remtype=0):
+    ''' 
+    remove_diagonal(A,remtype):
+        turn matrix into vector without the diagonal
+    Inputs:
+    A: square matrix
+    remtype:
+        0: remove diagonal only
+        1: remove diagonal and subdiagonal
+        -1: remove diagonal and superdiagonal
+    
+    Outputs:
+    entrylist: vector 
+    
+    '''
+    nr,nc=A.shape
+    entrylist=[]
+    for k in range(1,nr):
+        if remtype>=0: # 1 for super only
+            sup=list(np.diagonal(A, offset=k, axis2=1))
+            entrylist=entrylist+sup
+        if remtype<=0: #-1 for sub only
+            sub=list(np.diagonal(A, offset=-k, axis2=1))
+            entrylist=entrylist+sub
+    return entrylist
 
