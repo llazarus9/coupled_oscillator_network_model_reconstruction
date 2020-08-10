@@ -18,9 +18,10 @@ from scipy import interpolate
 from scipy.sparse import csr_matrix, lil_matrix,vstack,hstack
 from scipy.sparse.linalg import spsolve
 import scipy.signal as sp
+import sys
 
 
-class Network():
+class KuraRepsNetwork():
     def __init__(self,system_params):
         
         for key, value in system_params.items():
@@ -35,9 +36,9 @@ class Network():
         for key, value in solution_params.items():
             setattr(self, key, value)
         
-        if isinstance(self.IC,dict):
+        if any(self.IC) and isinstance(self.IC,dict):    # IC = IC_setup
             self.perturbs = True
-        else:
+        else:                           # IC = {} or IC = given
             self.perturbs = False
         
         
@@ -69,61 +70,226 @@ class Network():
         
         
     def dydt_kuramoto(self,t,y):
+        
         y = np.reshape(y,(-1,1))    # makes y a column vector
         dydt = self.w + self.K*np.mean(np.multiply(self.A,self.Gamma(y.T-y)),axis=1)
         
         return dydt
         
     
-    def gen_data(self):
-        # bulk here missing
-        return phases_all
+    def solve_kuramoto_ode(self):
         
+        tmin = 0.0
+        numsteps = int(np.round((self.tmax-tmin)/self.dt)) # number of steps to take
+        t_eval = np.linspace(tmin,self.tmax,numsteps+1)
         
+        if self.dyn_noise > 0:
+            t,y = solve_ivp_stochastic_rk2(self.dydt_kuramoto,
+                                 t_eval.reshape(-1,1),
+                                 self.curr_IC.reshape(1,-1),self.dyn_noise)
+        else:
+            sol = solve_ivp(self.dydt_kuramoto, 
+                          (tmin,self.tmax),
+                          self.curr_IC,
+                          method='RK45',
+                          t_eval=t_eval,
+                          vectorized=True)  # consider smaller rtol(def=1e-3)
+            t=(np.reshape(sol.t,(-1,1)))
+            y=(sol.y.T)
+            
+        return t,y
+    
+    
+    def gen_perturb(self,y):
+        
+        pert=np.zeros(self.num_osc)
+        
+        # which oscillator(s) to perturb
+        if self.IC['selection'] == 'fixed':
+            inds = self.IC['indices']
+        else:   # random
+            inds = np.random.choice(range(self.num_osc),
+                                    size=self.IC['num2perturb'],replace=False)
+        
+        ## type of perturbation
+        if self.IC['type'] == 'reset':
+            pert[inds] = -y[inds]
+        else:   # random
+            pert[inds] += np.random.randn(len(inds))*self.IC['size']
+        
+        return pert.reshape(1,-1)
+    
+    
+    def solve(self):
+        
+        for k in range(self.num_repeats):
+            
+            if self.perturbs and (k > 0):   # perturbation from previous
+                lasty = y[-1,:]
+                lasty = lasty - int(lasty.mean()/(2*np.pi))*2*np.pi
+                
+                pert = self.gen_perturb(lasty)
+                print("Repeat {}, phase perturbation: {}".format(k,pert.squeeze()))
+                self.curr_IC = lasty.squeeze() + pert.squeeze()
+            
+            elif self.perturbs:             # starting IC for a perturb set
+                self.curr_IC = self.IC['IC']
+                
+            elif any(self.IC):              # same IC all restarts
+                self.curr_IC = self.IC
+            else:                           # no IC given - re-randomize
+                self.curr_IC = np.array(2.0*np.pi*np.random.rand(self.num_osc))
+            
+            t,y = self.solve_kuramoto_ode()
+            y = y + self.noise*np.random.randn(y.shape[0],y.shape[1])
+            
+            deriv,phases = central_diff(t,y,with_filter=True,truncate=False,return_phases=True)
+            
+            n_ts = len(t)-2
+            t = t[range(1,n_ts,self.ts_skip)]
+            
+            if k==0:
+                phases_all = y[range(1,n_ts+1,self.ts_skip),:]
+                deriv_all = deriv[range(1,n_ts+1,self.ts_skip),:]
+            else:
+                phases_all = np.vstack((phases_all,y[range(1,n_ts+1,self.ts_skip),:]))
+                deriv_all = np.vstack((deriv_all,deriv[range(1,n_ts+1,self.ts_skip),:]))
+        
+        return phases_all,deriv_all
+        
+
+def solve_ivp_stochastic_rk2(dydt,T,IC,D):
+    ''' 
+    solve_ivp_stochastic_rk2(dydt,T,IC,D): 
+        Solve the stochastic ode given by dy=dydt(y) dt+D sqrt(dt)
+    
+    Inputs:
+    IC: numpy matrix (1,num_osc)
+    dydt: function
+    T: numpy array of times
+    D: scalar (noise level)
+       
+    Outputs:  
+    T: numpy array of times
+    f(T.squeeze()): matrix of phases (numsteps,num_oscillators)
+    ''' 
+    # Uses RK2 (improved Euler) with gaussian white noise
+    # D is the noise level
+    dt = 0.05
+    t = np.arange(T.min(),T.max()+dt,dt).reshape(-1,1)
+    f = lambda y: dydt(0,y)
+    Y = np.zeros((len(t),IC.shape[1]))
+    oldy = IC
+    Y[0,:] = oldy
+    for k in range(len(t)-1):
+        newy = rkstep(f,oldy,dt,D)
+        Y[k+1,:] = newy.squeeze()
+        oldy = newy
+    f = interpolate.interp1d(t.squeeze(), Y,axis=0)   
+    return T,f(T.squeeze())
+
+
+def rkstep(f,y,dt,D):
+    ''' 
+    rkstep(f,y,dt,D): 
+        Compute a single step for the stochastic ode described by dy=f(y)dt+D sqrt(dt)
+    
+    Inputs:
+    y: numpy matrix (1,num_osc)
+    f: function
+    dt: scalar (timestep)
+    D: scalar (noise level)
+       
+    Outputs:  
+    newy: numpy matrix (1,num_osc)
+    ''' 
+    # See  Honeycutt - Stochastic Runge-Kutta Algorithms I White Noise - 1992 -
+    # Phys Rev A
+    psi = np.random.randn(y.shape[1]);
+    k1 = f(y.T).T
+    k2 = f((y+dt*k1+np.sqrt(2*D*dt)*psi).T).T
+    newy = y + dt/2*(k1+k2) + np.sqrt(2*D*dt)*psi
+    return newy
+
+
+def central_diff(t,y,with_filter=True,truncate=True,return_phases=True):
+    '''
+    central_diff(t,y,with_filter,truncate):
+        estimate derivative
+    
+    Inputs:
+    t: time vector (n,1)
+    y: phase vector (n,m)
+    with_filter: boolean
+    truncate: boolean
+    return_phases: boolean
+    
+    Outputs:
+    phases: matrix with phases at timestep i (num_timesteps,num_osc)
+    deriv: matrix with velocities at timestep i  (num_timesteps,num_osc)
+      
+    '''
+    num_osc = y.shape[1]
+    dt = t[2:]-t[:-2]
+    dy = y[2:,:]-y[:-2,:]
+    deriv = dy/dt
+    
+    if with_filter:        
+        deriv = sp.savgol_filter(deriv, 5, 1,axis=0)
+    
+    if truncate:
+        phases = y[1:-1,:]
+    else:
+        phases = y
+        deriv = np.concatenate([np.nan*np.zeros(shape=(1,num_osc)),deriv,
+                                np.nan*np.zeros(shape=(1,num_osc))])
+
+    if return_phases:
+        return deriv,phases
+    else:
+        return deriv
+
+
+def get_op(y):
+    ''' 
+    get_op(y): 
+        Compute order parameter from phases
+    
+    Inputs:
+    y: numpy matrix (num_timesteps,num_osc)
+       
+    Outputs:  
+    R: magnitude of order parameter (num_timesteps,1)
+    Psi: angle of order parameter (num_timesteps,1)
+    ''' 
+    Z = np.mean(np.exp(1j*y),axis=1)
+    R = np.abs(Z)
+    Psi = np.angle(Z)
+    return R,Psi
+
+
+
 class NetworkData():
-    def __init__(self,phase,dt):
+    def __init__(self,phase,vel=None,t=None,dt=None):
         
         self.phase = phase
         self.num_oscs = phase.shape[1]
         self.n_timestep = phase.shape[0]
         
-        self.dt = dt
-        self.get_vel(with_filter=True,truncate=False,return_phases=True)
-        
-        
-        
-    def get_vel(self,with_filter=True,truncate=True,return_phases=True):
-        '''
-        See: central_diff.  Value dt assumed constant.
-
-        Parameters
-        ----------
-        with_filter : Boolean, optional
-            Use Savitsky-Golay filter? The default is True.
-        truncate : Boolean, optional
-            Only keep internal time points? The default is True.
-        return_phases : Boolean, optional
-            Return both velocities and phases? The default is True.
-        '''
-
-        
-        # dt=t[2:]-t[:-2]
-        dy = self.phase[2:,:]-self.phase[:-2,:]
-        deriv = dy/(2*self.dt)   # first approximation (y_{i+1}-y{i-1})/(2*dt)
-        
-        if with_filter:        
-            deriv = sp.savgol_filter(deriv, 5, 1, axis=0)
+        if (t is None) and (dt is None) and (vel is None):
+            sys.exit('Require vel, t, or dt for velocity computation.')
             
-        if truncate:
-            phases = self.phase[1:-1,:]
+        elif (vel is not None):
+            self.vel = vel
+            
         else:
-            phases = self.phase
-            deriv = np.concatenate([np.nan*np.zeros(shape=(1,self.num_osc)),deriv,
-                                    np.nan*np.zeros(shape=(1,self.num_osc))])
-            
-        if return_phases:
-            self.phase = phases
-        self.vel = deriv
+            if (t is not None):
+                self.t = t
+            else:
+                self.t = [(0+i*dt) for i in range(self.n_timestep)]
+                
+            self.vel = central_diff(self.t,self.phase,with_filter=True,
+                                    truncate=False,return_phases=False)
         
         
     def gen_diffs(self):
@@ -189,3 +355,4 @@ class NetworkData():
         
         return phase_train,diff_train,vel_train,phase_test,diff_test,vel_test
         
+

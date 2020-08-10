@@ -18,8 +18,8 @@ warnings.filterwarnings("ignore")
 ## define model parameters
 
 num_osc = 10
-mu_freq = 0.0         # mean natural frequency
-sigma_freq = 0.01     # std natural frequency
+mu_freq = 1.0         # mean natural frequency
+sigma_freq = 0.1     # std natural frequency
 p_erdos_renyi = 0.9   # probability of connection for erdos renyi
 random_seed = -1      # -1 to ignore
 coupling_function = lambda x: np.sin(x)   # coupling function
@@ -33,7 +33,7 @@ system_params = {'num_osc': num_osc,
                  'Gamma': coupling_function
                  }
 
-my_network = lk.Network(system_params)
+my_network = lk.KuraRepsNetwork(system_params)
 
 ##############################################################################
 ## define numerical solution parameters
@@ -49,14 +49,14 @@ IC_setup = {'type': 'reset',          # reset (set phase to 0) or random
       'num2perturb': 3,         # integer for 'random' selection
       'indices': [0,1,2],       # list of integers for 'fixed' selection
       'size': 2,                # float, used only when type='random'
-      'IC': 0*np.random.rand(num_osc)*np.pi*2  # initial condition for first repeat
+      'IC': np.random.rand(num_osc)*np.pi*2  # initial condition for first repeat
       }
 
 
 solution_params={'dt': dt, 
                  'tmax': tmax,
                  'noise': noise_level,
-                 'dynamic noise': dynamic_noise_level,
+                 'dyn_noise': dynamic_noise_level,
                  'ts_skip': 1, # don't skip timesteps
                  'num_repeats': num_repeats,
                  #'IC': np.random.rand(num_osc)*np.pi*2, # fixed initial condition for each repeat
@@ -71,7 +71,7 @@ my_network.add_ivp_info(solution_params)
 t = np.arange(0,tmax,dt)[:-1].reshape(-1,1)
 n_ts = t.shape[0]
 
-phases = my_network.gen_data()
+phases,vels = my_network.solve()
 
 
 figsize=(12,4)
