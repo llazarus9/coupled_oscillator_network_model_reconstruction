@@ -45,11 +45,11 @@ noise_level = 0.0           # observation noise added
 dynamic_noise_level = 0.00  # oscillator dynamics noise added
 
 num_repeats = 10            # number of restarts for numerical solution
-IC_setup = {'type': 'reset',          # reset (set phase to 0) or random
-      'selection': 'fixed',     # fixed or random
+IC_setup = {'type': 'random',          # reset (set phase to 0) or random
+      'selection': 'random',     # fixed or random
       'num2perturb': 3,         # integer for 'random' selection
       'indices': [0,1,2],       # list of integers for 'fixed' selection
-      'size': 2,                # float, used only when type='random'
+      'size': 1,                # float, used only when type='random'
       'IC': np.random.rand(num_osc)*np.pi*2  # initial condition for first repeat
       }
 
@@ -73,7 +73,7 @@ t = np.arange(0,tmax,dt)[:-1].reshape(-1,1)
 n_ts = t.shape[0]
 
 phases,vels = my_network.solve()
-my_data = lk.NetworkData(phases,vels)
+my_data = lk.NetworkData(phases,vel=vels)
 
 
 
@@ -117,6 +117,7 @@ num_attempts = 5
 n_epochs = 100
 batch_size = 100
 n_coefficients = 5 # number of harmonics
+# fourier_period = 2*np.pi
 method = 'rk4' #'rk2','rk4','euler',
 
 learning_params = {'learning_rate': 0.005,
@@ -125,6 +126,7 @@ learning_params = {'learning_rate': 0.005,
                    'n_oscillators': num_osc,
                    'dt': dt,
                    'n_coefficients': n_coefficients,
+                   #'period': fourier_period,
                    'reg': 0.0001,
                    'prediction_method': method,
                    'n_attempts': num_attempts,
@@ -141,7 +143,6 @@ train_model = False
 if train_model:
     
     my_data.gen_training_test_data()
-    
     predA,predw,fout,K,error_val = my_model.learn(my_data)
 
     f_res,A_res,w_res = my_model.evaluate(my_network,

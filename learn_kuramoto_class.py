@@ -393,7 +393,7 @@ class LearnModel():
         return f_res, A_res, w_res
         
     
-def loss_sse(self,ypred,ytrue,A,c):
+def loss_sse(self,ypred,ytrue,A,c=[1.0,1.0]):
     
     push_in = 100
     push_out = 10**(-6)
