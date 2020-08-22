@@ -123,9 +123,8 @@ method = 'rk4' #'rk2','rk4','euler',
 learning_params = {'learning_rate': 0.005,
                    'n_epochs': n_epochs, 
                    'batch_size': batch_size,
-                   'n_oscillators': num_osc,
-                   'dt': dt,
-                   'n_coefficients': n_coefficients,
+                   'num_osc': num_osc,
+                   'n_coeffs': n_coefficients,
                    #'period': fourier_period,
                    'reg': 0.0001,
                    'prediction_method': method,
@@ -139,13 +138,13 @@ my_model = lk.LearnModel(learning_params)
 ##############################################################################
 ## train and evaluate results
 
-train_model = False
+train_model = True
 if train_model:
     
     my_data.gen_training_test_data()
     predA,predw,fout,K,error_val = my_model.learn(my_data)
 
     f_res,A_res,w_res = my_model.evaluate(my_network,
-                                          print_results=True,show_plots=False)
+                                          print_results=True,show_plots=True)
 
 

@@ -8,14 +8,14 @@ Created on Mon Jul 20 14:22:47 2020
 import numpy as np
 from scipy.integrate import solve_ivp
 from scipy import optimize
-from functools import partial
+#from functools import partial
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import pandas as pd
 import warnings
 from sklearn.metrics import roc_curve, auc, f1_score
 from scipy import interpolate
-from scipy.sparse import csr_matrix, lil_matrix,vstack,hstack
+from scipy.sparse import vstack,hstack
 from scipy.sparse.linalg import spsolve
 import scipy.signal as sp
 import sys
@@ -336,11 +336,11 @@ class NetworkData():
         traininds = inds[:stop]
         testinds = inds[stop:]
         
-        self.diff_train = self.diffs[traininds,:,:]
+        self.diff_train = add_dim(self.diffs[traininds,:,:])
         self.phase_train = self.phase[traininds,:]
         self.vel_train = self.vel[traininds,:]
         
-        self.diff_test = self.diffs[testinds,:,:]
+        self.diff_test = add_dim(self.diffs[testinds,:,:])
         self.phase_test = self.phase[testinds,:]
         self.vel_test = self.vel[testinds,:]
         
@@ -371,10 +371,164 @@ class LearnModel():
     
     def learn(self,data):
         
-        # obviously a lot to fill in here.
+        # contruct model
+        tf.reset_default_graph()
+        if self.global_seed>0:
+            tf.set_random_seed(self.global_seed) # remove this later
+            
+        # initialize placeholders for inputs
+        X1 = tf.placeholder(dtype=tf.float32, shape=(None,self.num_osc,self.num_osc,1), name="X1")
+        X2 = tf.placeholder(dtype=tf.float32, shape=(None,self.num_osc), name="X2")
+        y = tf.placeholder(dtype=tf.float32, shape=(None,self.num_osc), name="y")
         
-        self.diff_test = data.diff_test
-        pass
+        
+        ## initialize variable A (Adjacency matrix) that is symmetric with 0 entries on the diagonal.
+        A_rand = tf.Variable(tf.random_normal((self.num_osc,self.num_osc),
+                                              mean=0.5,
+                                              stddev=1/self.num_osc),
+                             name='A_rand',
+                             dtype=tf.float32)
+        
+        A_upper = tf.matrix_band_part(A_rand, 0, -1)
+        A = 0.5 * (A_upper + tf.transpose(A_upper))-tf.matrix_band_part(A_upper,0,0)
+        
+        ## initialize variable omega (natural frequencies) 
+        omega = tf.Variable(tf.random_normal((1,self.num_osc),mean=0,stddev=1/self.num_osc,dtype=tf.float32),
+                            name='omega',dtype=tf.float32) 
+        
+        ## initialize variable K (coupling strength value)
+        K = tf.Variable(tf.random_normal(shape=(1,),mean=1,stddev=1/self.num_osc,dtype=tf.float32),name='K') 
+        
+        
+        c = np.array([1.0,1.0]) # regularization parameters for A matrix
+        
+        ## compute phase velocities
+        v,fout = self.get_vel(A,omega,K,X1)
+        
+        ## compute predictions
+        if self.prediction_method=='rk2':
+            k1=v
+            k2=self.get_vel(A,omega,K,self.get_diff_tensor(X2+data.dt*k1/2.0))[0] # compute improved velocity prediction
+            velpred=k2
+        elif self.prediction_method=='rk4':
+            k1=v
+            k2=self.get_vel(A,omega,K,self.get_diff_tensor(X2+data.dt*k1/2.0))[0]
+            k3=self.get_vel(A,omega,K,self.get_diff_tensor(X2+data.dt*k2/2.0))[0]
+            k4=self.get_vel(A,omega,K,self.get_diff_tensor(X2+data.dt*k3))[0]
+            velpred=1/6.0*k1+1/3.0*k2+1/3.0*k3+1/6.0*k4
+        elif self.prediction_method=='euler':
+            velpred=v
+        else:
+            print('Invalid prediction method. Using default of Euler.')
+            velpred=v
+        
+        ## compute regularization terms for neural network weights
+        l2_loss = tf.losses.get_regularization_loss()
+        
+        ## loss function computation
+        with tf.name_scope("loss"):
+            loss = self.loss_sse(velpred,y,A,c) + l2_loss
+        
+        ## initialize optimizer (use Adam)
+        with tf.name_scope("train"):
+            # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+            optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate,
+                                               beta1=0.9,beta2=0.999)
+            training_op = optimizer.minimize(loss)
+            
+        ## compute error to be displayed (currently ignores regularization terms)
+        with tf.name_scope("eval"):
+            error = self.loss_sse(velpred,y,A,np.array([0.0,0.0])) # no Aij error away from 0,1
+            
+        init = tf.global_variables_initializer()
+        
+        ## initialize variables and optimize variables
+        with tf.Session() as sess:
+            init.run()
+            
+            ## loop for batch gradient descent
+            for epoch in range(self.n_epochs):
+                for X1_batch, X2_batch, y_batch in data.shuffle_batch(self.batch_size):
+                    sess.run(training_op, feed_dict={X1: X1_batch, X2: X2_batch, y: y_batch})
+                error_batch = error.eval(feed_dict={X1: X1_batch, X2: X2_batch, y: y_batch})
+                error_val = error.eval(feed_dict={X1: data.diff_test, X2: data.phase_test, y: data.vel_test})
+                
+                ## display results every 20 epochs
+                if epoch % 20==0:
+                    print('',end='\n')
+                    print("Epoch:",epoch, "Batch error:", error_batch, "Val error:", error_val,end='')
+                else:
+                    print('.',end='')
+                    #print(tf.trainable_variables())
+            print('',end='\n')
+            
+            self.A = A.eval()
+            self.w = omega.eval()
+            self.fout = fout.eval(feed_dict={X1: np.angle(np.exp(1j*data.diff_test)), X2: data.phase_test, y: data.vel_test})
+            self.K = K.eval()
+            self.error_val = error_val
+            
+            self.diff_test = data.diff_test
+            
+            return(A.eval(),
+                   omega.eval(),
+                   fout.eval(feed_dict={X1: np.angle(np.exp(1j*data.diff_test)), X2: data.phase_test, y: data.vel_test}),
+                   K.eval(),error_val)
+    
+    
+    
+    def loss_sse(self,ypred,ytrue,A,c=[1.0,1.0]):
+        
+        push_in = 100
+        push_out = 10**(-6)
+        loss=(tf.reduce_mean(tf.square(tf.subtract(ypred,ytrue)),name="loss")
+                +push_in*(c[0]*tf.reduce_mean(tf.maximum(A-1,0))
+                      +c[1]*tf.reduce_mean(tf.maximum(-A,0)))
+                +push_out*(tf.reduce_mean(tf.square(A))
+                           +tf.reduce_mean(tf.square(1-A))))
+        
+        return loss
+    
+    
+    
+    def get_vel(self,A,omega,K,X):
+        
+        G = self.single_network(X)
+        v = omega + K*tf.reduce_mean(tf.multiply(A,G),axis=1)
+        return v,G
+    
+    def single_network(self,X):
+        
+        regularizer = tf.contrib.layers.l2_regularizer(scale=self.reg)
+        
+        Xmerged = self.fourier_terms(X)
+        with tf.name_scope("fourier"):
+            fout = tf.layers.conv2d(inputs=Xmerged,
+                                    filters=1,
+                                    kernel_size=[1, 1],
+                                    padding="same",
+                                    strides=(1,1),
+                                    activation=None,
+                                    name="fourier0",
+                                    kernel_regularizer=regularizer,
+                                    kernel_initializer=tf.zeros_initializer(), # changed
+                                    use_bias=False,
+                                    reuse=tf.AUTO_REUSE
+                                    )
+        return tf.cast(tf.squeeze(fout),tf.float32)
+    
+    def fourier_terms(self,X):
+        
+        Xmerged = tf.concat([tf.sin(X),tf.cos(X)],axis=3)
+        for n in range(2,self.n_coeffs+1):
+            Xmerged = tf.concat([Xmerged,tf.sin(n*X),tf.cos(n*X)],axis=3)
+        return Xmerged
+    
+    def get_diff_tensor(self,y):
+        
+        finaldiffmat = tf.reshape(y,[-1,self.num_osc,1,1])-tf.reshape(y,[-1,1,self.num_osc,1])
+        return finaldiffmat
+    
     
     
     def evaluate(self,true_net, print_results=True, show_plots=False):
@@ -395,17 +549,13 @@ class LearnModel():
         return f_res, A_res, w_res
         
     
-def loss_sse(self,ypred,ytrue,A,c=[1.0,1.0]):
-    
-    push_in = 100
-    push_out = 10**(-6)
-    loss=(tf.reduce_mean(tf.square(tf.subtract(ypred,ytrue)),name="loss")
-            +push_in*(c[0]*tf.reduce_mean(tf.maximum(A-1,0))
-                  +c[1]*tf.reduce_mean(tf.maximum(-A,0)))
-            +push_out*(tf.reduce_mean(tf.square(A))
-                       +tf.reduce_mean(tf.square(1-A))))
-    
-    return loss
+
+def add_dim(X,axis=3):
+    '''
+    add_dim(X,axis=3):
+        add dimension to tensor
+    '''
+    return np.expand_dims(X,axis).copy()
 
 
 def evaluate_w(predw,truew, print_results=True):
