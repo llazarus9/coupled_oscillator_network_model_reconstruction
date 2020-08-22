@@ -293,24 +293,27 @@ class NetworkData():
                 
             self.vel = central_diff(self.t,self.phase,with_filter=True,
                                     truncate=False,return_phases=False)
-        
+            
+        if dt is None:
+            if t is None:
+                self.dt = 0.1 # default if no time info given
+            else:
+                self.dt = t[1]-t[0] # assumed constant
+                
         
     def gen_diffs(self):
         '''
         See: get_diff_mat.
         '''
-        y = self.phase
         
-        nrows=y.shape[0]
-        ncols=y.shape[1]
-        finaldiffmat=np.zeros(shape=(nrows,ncols,ncols))
+        finaldiffmat = np.zeros(shape=(self.n_timestep,self.num_oscs,self.num_oscs))
         
-        for index in range(nrows):
-            row=y[index,:]
-            rowvec=np.array(row,ndmin=2)
-            colvec=np.transpose(rowvec)
-            diffmat=-(rowvec-colvec)
-            finaldiffmat[index,:,:]=diffmat
+        for index in range(self.n_timestep):
+            row = self.phase[index,:]
+            rowvec = np.array(row,ndmin=2)
+            colvec = np.transpose(rowvec)
+            diffmat = -(rowvec-colvec)
+            finaldiffmat[index,:,:] = diffmat
         
         self.diffs = finaldiffmat
         
@@ -325,21 +328,20 @@ class NetworkData():
             Proportion of data to use as training data. The default is 0.8.
 
         '''
-        if self.diffs is None:
-            self.gen_diffs
+        if not hasattr(self,'diffs'):
+            self.gen_diffs()
         
-        n_timestep = self.diffs.shape[0]
-        inds = np.random.permutation(n_timestep)
-        stop = int(np.ceil(frac*n_timestep))
+        inds = np.random.permutation(self.n_timestep)
+        stop = int(np.ceil(frac*self.n_timestep))
         traininds = inds[:stop]
         testinds = inds[stop:]
         
-        self.phase_train = self.phase[traininds,:]
         self.diff_train = self.diffs[traininds,:,:]
+        self.phase_train = self.phase[traininds,:]
         self.vel_train = self.vel[traininds,:]
         
-        self.phase_test = self.phase[testinds,:]
         self.diff_test = self.diffs[testinds,:,:]
+        self.phase_test = self.phase[testinds,:]
         self.vel_test = self.vel[testinds,:]
         
         #return self.phase_train,self.diff_train,self.vel_train,
