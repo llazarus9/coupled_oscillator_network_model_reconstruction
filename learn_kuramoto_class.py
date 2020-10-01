@@ -370,6 +370,26 @@ class LearnModel():
     
     
     def learn(self,data):
+        if hasattr(self,'n_attempts'):
+            best_error_val = float("inf")
+            
+            for att in range(self.n_attempts):
+                A,omega,fout,K,error_val = self.learn_once(data)
+                
+                if error_val < best_error_val: # store the best outputs
+                    self.A = A
+                    self.omega = omega
+                    self.fout = fout
+                    self.K = K
+                    self.error_val = error_val
+                    best_error_val = error_val
+            
+        else:
+            self.A,self.omega,self.fout,self.K,self.error_val = self.learn_once(data)
+        
+        return self.A,self.omega,self.fout,self.K,self.error_val
+    
+    def learn_once(self,data):
         
         # contruct model
         tf.reset_default_graph()
@@ -462,18 +482,16 @@ class LearnModel():
                     #print(tf.trainable_variables())
             print('',end='\n')
             
-            self.A = A.eval()
-            self.w = omega.eval()
-            self.fout = fout.eval(feed_dict={X1: np.angle(np.exp(1j*data.diff_test)), X2: data.phase_test, y: data.vel_test})
-            self.K = K.eval()
-            self.error_val = error_val
-            
-            self.diff_test = data.diff_test
+            self.diff_mesh = np.linspace(-np.pi,np.pi,100*self.num_osc*self.num_osc,
+                                         endpoint=True).reshape(
+                                             (100,self.num_osc,self.num_osc,1))
             
             return(A.eval(),
                    omega.eval(),
-                   fout.eval(feed_dict={X1: np.angle(np.exp(1j*data.diff_test)), X2: data.phase_test, y: data.vel_test}),
-                   K.eval(),error_val)
+                   fout.eval(feed_dict={X1: self.diff_mesh, X2: data.phase_test, 
+                                        y: data.vel_test}),
+                   K.eval(),
+                   error_val)
     
     
     
@@ -495,6 +513,7 @@ class LearnModel():
         
         G = self.single_network(X)
         v = omega + K*tf.reduce_mean(tf.multiply(A,G),axis=1)
+        
         return v,G
     
     def single_network(self,X):
@@ -537,14 +556,14 @@ class LearnModel():
             self.fout = -1.0*self.fout
             self.K = -1.0*self.K
         
-        f_res,c = evaluate_f(self.diff_test, self.fout, self.K, true_net.Gamma, 
+        f_res,c = evaluate_f(self.diff_mesh, self.fout, self.K, true_net.Gamma, 
                            print_results=print_results, show_plots=show_plots)
         A_res = evaluate_A(self.A, true_net.A, proportion_of_max=0.9,
                          print_results=print_results, show_plots=show_plots)
         
         Nj = (self.A/c[1]).sum(axis=0)
-        self.w = self.w - self.K*Nj*c[0]/self.num_osc
-        w_res = evaluate_w(self.w, true_net.w, print_results=print_results)
+        self.omega = self.omega - self.K*Nj*c[0]/self.num_osc
+        w_res = evaluate_w(self.omega, true_net.w, print_results=print_results)
         
         return f_res, A_res, w_res
         
@@ -591,7 +610,7 @@ def evaluate_w(predw,truew, print_results=True):
         print('Correlation: %.5f' % (np.corrcoef(np.concatenate([truew,predw],axis=1).T)[0,1]))
         print('')    
     
-    w_res = pd.Series()
+    w_res = pd.Series(dtype='float64')
     w_res['Maximum absolute deviation'] = np.max(absolute_deviation)
     w_res['Mean absolute deviation'] = np.mean(absolute_deviation)
     w_res['Maximum relative deviation (%)'] = np.max(relative_deviation)
@@ -733,7 +752,7 @@ def evaluate_A(predA,trueA, print_results=True,show_plots=False, proportion_of_m
         print('Threshold range for >%.1f%% of best f1 score: [%.5f,%.5f]' % (100*proportion_of_max,threshold_range[0],threshold_range[1]))
         print('')
     
-    A_res=pd.Series()
+    A_res=pd.Series(dtype='float64')
     
     A_res['Number of errors']=n_errors
     A_res['Error rate']=n_errors/(num_osc*(num_osc-1)/2)*100

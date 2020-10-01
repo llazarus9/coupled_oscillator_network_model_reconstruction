@@ -18,8 +18,8 @@ warnings.filterwarnings("ignore")
 ## define model parameters
 
 num_osc = 10
-mu_freq = 1.0         # mean natural frequency
-sigma_freq = 0.1     # std natural frequency
+mu_freq = 0.0         # mean natural frequency
+sigma_freq = 0.01     # std natural frequency
 p_erdos_renyi = 0.9   # probability of connection for erdos renyi
 random_seed = -1      # -1 to ignore
 coupling_function = lambda x: np.sin(x)   # coupling function
@@ -45,12 +45,12 @@ noise_level = 0.0           # observation noise added
 dynamic_noise_level = 0.00  # oscillator dynamics noise added
 
 num_repeats = 10            # number of restarts for numerical solution
-IC_setup = {'type': 'random',          # reset (set phase to 0) or random
-      'selection': 'random',     # fixed or random
+IC_setup = {'type': 'reset',          # reset (set phase to 0) or random
+      'selection': 'fixed',     # fixed or random
       'num2perturb': 3,         # integer for 'random' selection
       'indices': [0,1,2],       # list of integers for 'fixed' selection
-      'size': 1,                # float, used only when type='random'
-      'IC': np.random.rand(num_osc)*np.pi*2  # initial condition for first repeat
+      'size': 2,                # float, used only when type='random'
+      'IC': 0*np.random.rand(num_osc)*np.pi*2  # initial condition for first repeat
       }
 
 solution_params={'dt': dt, 
@@ -59,7 +59,7 @@ solution_params={'dt': dt,
                  'dyn_noise': dynamic_noise_level,
                  'ts_skip': 1, # don't skip timesteps
                  'num_repeats': num_repeats,
-                 #'IC': np.random.rand(num_osc)*np.pi*2, # fixed initial condition for each repeat
+                 #'IC': np.random.rand(num_osc)*np.pi*2 # fixed initial condition for each repeat
                  'IC': IC_setup
                  }
 
@@ -113,7 +113,7 @@ plt.show()
 ##############################################################################
 ## define learning parameters
 
-num_attempts = 5
+num_attempts = 1
 n_epochs = 100
 batch_size = 100
 n_coefficients = 5 # number of harmonics
