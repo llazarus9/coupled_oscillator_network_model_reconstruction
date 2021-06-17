@@ -9,6 +9,7 @@ import learn_kuramoto_files as lk
 import numpy as np
 import importlib as imp
 import matplotlib.pyplot as plt
+import time
 imp.reload(lk)
 
 ##############################################################################
@@ -29,8 +30,6 @@ noise_level=0.0 # post solution noise added
 dynamic_noise_level=0.00 # post solution noise added
 num_repeats=10#10 # number of restarts for numerical solution
 num_attempts=1#5 # number of times to attempt to learn from data for each network
-method='euler' #'rk2','rk4','euler',
-with_vel=True # velocity version only
 ## Note: the loop parameter value will overwrite the value above
 parameter=None
 
@@ -97,9 +96,10 @@ for rep in range(num_repeats):
             ax.axvline(x=rep*tmax,ymin=ylim[0],ymax=ylim[1],color='k',linestyle='--')
 plt.show()
 
+start = time.time()
 train_model=True
 if train_model:
-    n_epochs=100
+    n_epochs=400
     batch_size=100
     n_coefficients=5 # number of harmonics
     method='rk4' #'rk2','rk4','euler',
@@ -121,6 +121,7 @@ if train_model:
     trainX1,trainX2,trainY,testX1,testX2,testY=lk.get_training_testing_data(
                     phases,vel,split_frac=0.8)
     predA,predw,fout,K,error_val=lk.learn_model_vel(learning_params,trainX1,trainX2,trainY,testX1,testX2,testY)
+    print(time.time()-start)
     if K<0:
         fout=fout*(-1.0)
         K=-K

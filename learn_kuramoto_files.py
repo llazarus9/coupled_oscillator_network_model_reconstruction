@@ -816,7 +816,7 @@ def evaluate_w(predw,system_params, print_results=True):
         print('Correlation: %.5f' % (np.corrcoef(np.concatenate([correctw,predw],axis=1).T)[0,1]))
         print('')    
     
-    w_res=pd.Series()
+    w_res=pd.Series(dtype='float64') # specified for DeprecationWarning
     w_res['Maximum absolute deviation']=np.max(absolute_deviation)
     w_res['Mean absolute deviation']=np.mean(absolute_deviation)
     w_res['Maximum relative deviation (%)']=np.max(relative_deviation)
@@ -955,7 +955,7 @@ def evaluate_A(predA,system_params, print_results=True,show_plots=False, proport
         print('Threshold range for >%.1f%% of best f1 score: [%.5f,%.5f]' % (100*proportion_of_max,threshold_range[0],threshold_range[1]))
         print('')
     
-    A_res=pd.Series()
+    A_res=pd.Series(dtype='float64')  # specified for DeprecationWarning
     
     A_res['Number of errors']=n_errors
     A_res['Error rate']=n_errors/(num_osc*(num_osc-1)/2)*100
