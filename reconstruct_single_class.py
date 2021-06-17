@@ -142,7 +142,7 @@ train_model = True
 if train_model:
     
     my_data.gen_training_test_data()
-    predA,predw,fout,K,error_val = my_model.learn(my_data)
+    predA,predw,fout,K,error_val,FC_weights = my_model.learn(my_data)
 
     f_res,A_res,w_res = my_model.evaluate(my_network,
                                           print_results=True,show_plots=True)

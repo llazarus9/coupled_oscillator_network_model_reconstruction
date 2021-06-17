@@ -15,8 +15,6 @@ import pandas as pd
 import warnings
 from sklearn.metrics import roc_curve, auc, f1_score
 from scipy import interpolate
-from scipy.sparse import vstack,hstack
-from scipy.sparse.linalg import spsolve
 import scipy.signal as sp
 import sys
 
@@ -374,7 +372,7 @@ class LearnModel():
             best_error_val = float("inf")
             
             for att in range(self.n_attempts):
-                A,omega,fout,K,error_val = self.learn_once(data)
+                A,omega,fout,K,error_val,FC_weights = self.learn_once(data)
                 
                 if error_val < best_error_val: # store the best outputs
                     self.A = A
@@ -383,11 +381,12 @@ class LearnModel():
                     self.K = K
                     self.error_val = error_val
                     best_error_val = error_val
+                    self.FC_weights = FC_weights
             
         else:
-            self.A,self.omega,self.fout,self.K,self.error_val = self.learn_once(data)
+            self.A,self.omega,self.fout,self.K,self.error_val,self.FC_weights = self.learn_once(data)
         
-        return self.A,self.omega,self.fout,self.K,self.error_val
+        return self.A,self.omega,self.fout,self.K,self.error_val,self.FC_weights
     
     def learn_once(self,data):
         
@@ -460,6 +459,7 @@ class LearnModel():
         with tf.name_scope("eval"):
             error = self.loss_sse(velpred,y,A,np.array([0.0,0.0])) # no Aij error away from 0,1
             
+        
         init = tf.global_variables_initializer()
         
         ## initialize variables and optimize variables
@@ -485,13 +485,18 @@ class LearnModel():
             self.diff_mesh = np.linspace(-np.pi,np.pi,100*self.num_osc*self.num_osc,
                                          endpoint=True).reshape(
                                              (100,self.num_osc,self.num_osc,1))
+                                             
+            
+            FC_weights = tf.get_default_graph().get_tensor_by_name(
+                "fourier0/kernel:0").eval()[0,0,:,0]
             
             return(A.eval(),
                    omega.eval(),
                    fout.eval(feed_dict={X1: self.diff_mesh, X2: data.phase_test, 
                                         y: data.vel_test}),
                    K.eval(),
-                   error_val)
+                   error_val,
+                   FC_weights)
     
     
     
@@ -519,6 +524,9 @@ class LearnModel():
     def single_network(self,X):
         
         regularizer = tf.contrib.layers.l2_regularizer(scale=self.reg)
+        initializer = tf.zeros_initializer() # from MP
+        #prev_weights = np.random.normal(0, 1, (1,1,10,1)) # uses tensor shape
+        #initializer = tf.keras.initializers.constant(prev_weights)
         
         Xmerged = self.fourier_terms(X)
         with tf.name_scope("fourier"):
@@ -530,9 +538,10 @@ class LearnModel():
                                     activation=None,
                                     name="fourier0",
                                     kernel_regularizer=regularizer,
-                                    kernel_initializer=tf.zeros_initializer(), # changed
+                                    kernel_initializer=initializer, # changed
                                     use_bias=False,
-                                    reuse=tf.AUTO_REUSE
+                                    reuse=tf.AUTO_REUSE,
+                                    trainable=True
                                     )
         return tf.cast(tf.squeeze(fout),tf.float32)
     
@@ -556,8 +565,9 @@ class LearnModel():
             self.fout = -1.0*self.fout
             self.K = -1.0*self.K
         
-        f_res,c = evaluate_f(self.diff_mesh, self.fout, self.K, true_net.Gamma, 
+        f_res,c = evaluate_f(self.diff_mesh, self.fout, self.K, true_net.Gamma, self.FC_weights, 
                            print_results=print_results, show_plots=show_plots)
+        print(c[0],'+',c[1],'*f minimizes difference in area')
         A_res = evaluate_A(self.A, true_net.A, proportion_of_max=0.9,
                          print_results=print_results, show_plots=show_plots)
         
@@ -567,6 +577,21 @@ class LearnModel():
         
         return f_res, A_res, w_res
         
+    
+def gamma_inf_FC(weights,ins):
+    '''
+    interprets vector of Fourier coefficients into truncated Fourier series
+    for evaluation of the inferred interaction function
+    '''
+    
+    outs = np.zeros(ins.shape)
+    n_coeffs = len(weights)/2
+    
+    for n in range(1,n_coeffs + 1):
+        outs = outs + weights[2*n-2]*np.sin(n*ins)
+        outs = outs + weights[2*n-1]*np.cos(n*ins)
+    
+    return outs
     
 
 def add_dim(X,axis=3):
@@ -619,7 +644,7 @@ def evaluate_w(predw,truew, print_results=True):
     
     return w_res
 
-def evaluate_f(testX1,fout,K,corr_G, print_results=True,show_plots=False):
+def evaluate_f(testX1,fout,K,corr_G,weights, print_results=True,show_plots=False):
     ''' 
     evaluate_f(predw,system_params, print_results,show_plots):
         compute results for frequency estimation
@@ -678,6 +703,7 @@ def evaluate_f(testX1,fout,K,corr_G, print_results=True,show_plots=False):
         plt.figure()
         plt.plot(x_for_fout,c[0]+c[1]*predF,'blue')
         plt.plot(x_for_fout,correctF,'red')
+        plt.plot(x_for_fout,c[0]+c[1]*gamma_inf_FC(weights,x_for_fout),'green')
         plt.xlabel(r'Phase difference $\Delta\theta$',fontsize=FS)
         plt.ylabel(r'Coupling: $\Gamma(\Delta\theta)$',fontsize=FS)
     if print_results:
