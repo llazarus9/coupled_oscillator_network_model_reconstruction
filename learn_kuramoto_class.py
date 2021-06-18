@@ -585,7 +585,7 @@ def gamma_inf_FC(weights,ins):
     '''
     
     outs = np.zeros(ins.shape)
-    n_coeffs = len(weights)/2
+    n_coeffs = int(len(weights)/2)
     
     for n in range(1,n_coeffs + 1):
         outs = outs + weights[2*n-2]*np.sin(n*ins)
